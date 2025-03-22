@@ -1,0 +1,18 @@
+[project]
+name = "doez-ml"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "mlflow>=2.21.0",
+    "torch>=2.6.0",
+    "torchvision>=0.21.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"

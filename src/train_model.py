@@ -65,7 +65,7 @@ def train(num_epochs=20, learning_rate=0.001, batch_size=64):
 
             if val_acc > best_accuracy:
                 best_accuracy = val_acc
-                torch.save(model.state_dict(), "best_model_hybrid.pth")
+                torch.save(model.state_dict(), "../tests/best_model.pth")
                 print(f"✅ Best model saved with val acc: {val_acc:.4f}")
 
             scheduler.step()

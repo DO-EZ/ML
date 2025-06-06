@@ -1,0 +1,6 @@
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# MLflow 서버 주소를 cron 환경변수에 추가
+MLFLOW_TRACKING_URI=http://mlflow:5000
+# 분 시  일 월 요일 사용자 명령
+0 0 * * * root /app/auto_run/run_training.sh

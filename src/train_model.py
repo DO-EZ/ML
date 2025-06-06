@@ -9,7 +9,7 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from data_loader import get_dataloaders
 from eval import evaluate
 from models import HybridCNN
-
+mlflow.set_tracking_uri("http://mlflow:5000")
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -30,7 +30,7 @@ def train(num_epochs=20, learning_rate=0.001, batch_size=64, seed=42):
 
     set_seed(seed)
     
-    mlflow.set_tracking_uri("http://localhost:5000")
+    mlflow.set_tracking_uri("http://mlflow:5000")
     mlflow.set_experiment("mnist-digit-captcha")    
     with mlflow.start_run():    
         device = get_device()
@@ -81,11 +81,10 @@ def train(num_epochs=20, learning_rate=0.001, batch_size=64, seed=42):
             mlflow.log_metric("recall", recall, step=epoch)
             mlflow.log_metric("f1_score", f1, step=epoch)   
             if val_acc > best_accuracy:
-                best_accuracy = val_acc
-                torch.save(model.state_dict(), "../tests/best_model.pth")
-                mlflow.log_artifact("../tests/best_model.pth")
-                print(f"Best model saved and logged with val acc: {val_acc:.4f}")   
-            scheduler.step()    
+                torch.save(model.state_dict(), "tests/best_model.pth")
+                mlflow.log_artifact("tests/best_model.pth")
+                print(f"Best model saved and logged with val acc: {val_acc:.4f}")
+            scheduler.step()
         mlflow.pytorch.log_model(model, artifact_path="model", registered_model_name="HybridCNN")
         mlflow.log_param("epochs", num_epochs)
         mlflow.log_param("optimizer", "Adam")

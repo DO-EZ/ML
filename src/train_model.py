@@ -9,7 +9,8 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 from data_loader import get_dataloaders
 from eval import evaluate
 from models import HybridCNN
-mlflow.set_tracking_uri("http://mlflow:5000")
+from mlflow.tracking import MlflowClient
+from datetime import datetime
 def set_seed(seed=42):
     random.seed(seed)
     np.random.seed(seed)
@@ -27,10 +28,10 @@ def get_device():
         return torch.device("cpu")
 
 def train(num_epochs=20, learning_rate=0.001, batch_size=64, seed=42):
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
     set_seed(seed)
     
-    mlflow.set_tracking_uri("http://mlflow:5000")
     mlflow.set_experiment("mnist-digit-captcha")    
     with mlflow.start_run():    
         device = get_device()
@@ -85,7 +86,13 @@ def train(num_epochs=20, learning_rate=0.001, batch_size=64, seed=42):
                 mlflow.log_artifact("tests/best_model.pth")
                 print(f"Best model saved and logged with val acc: {val_acc:.4f}")
             scheduler.step()
-        mlflow.pytorch.log_model(model, artifact_path="model", registered_model_name="HybridCNN")
+        client = MlflowClient()
+        run_id = mlflow.active_run().info.run_id
+        model_uri = f"runs:/{run_id}/model"
+        mv = client.create_model_version(name="HybridCNN", source=model_uri, run_id=run_id)
+        version = mv.version
+        client.set_model_version_tag(name="HybridCNN", version=version, key="timestamp", value=timestamp)
+        client.set_registered_model_alias(name="HybridCNN", alias=timestamp, version=version)
         mlflow.log_param("epochs", num_epochs)
         mlflow.log_param("optimizer", "Adam")
         mlflow.log_param("learning_rate", learning_rate)

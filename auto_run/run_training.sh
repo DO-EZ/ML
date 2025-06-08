@@ -8,8 +8,7 @@ mkdir -p logs
 
 # 4) uv run 명령을 실행할 때 환경변수를 한 줄에 함께 지정
 TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
-MLFLOW_TRACKING_URI=http://mlflow:5000 \
-  uv run python src/train_model.py \
+uv run python src/train_model.py \
   > "logs/train_${TIMESTAMP}.log" 2>&1
 
 # 5) 완료 메시지

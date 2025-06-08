@@ -1,12 +1,33 @@
 # Python-generated files
-__pycache__/
-*.py[oc]
+__pycache__/ 
+*.py[cod]
 build/
 dist/
 wheels/
 *.egg-info
 
 # Virtual environments
-.venv
+.venv/
+.env
+.python-version
 
+mlflow.db
 mlruns/
+mlartifacts/
+best_model_*.pth
+user_data/
+
+data/MNIST/raw/
+
+# 잠금 파일
+uv.lock
+
+# IDE / 에디터 설정
+.vscode/
+.idea/
+
+# 운영체제 메타파일
+.DS_Store
+
+# 로그
+*.log

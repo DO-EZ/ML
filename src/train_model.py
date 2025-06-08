@@ -1,99 +1,188 @@
-import mlflow
-import mlflow.pytorch
+import os
+import argparse
+import random
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import random
-import numpy as np
-from sklearn.metrics import precision_score, recall_score, f1_score
-from data_loader import get_dataloaders
-from eval import evaluate
-from models import HybridCNN
 
-def set_seed(seed=42):
+from sklearn.metrics import precision_score, recall_score, f1_score
+
+import mlflow
+import mlflow.pytorch
+
+from fetch_user_images import fetch_and_extract_user_images
+from data_loader import get_combined_dataloaders, get_mnist_only_dataloaders
+from models import HybridCNN
+from eval import evaluate
+
+def train(
+    be_base_url: str,
+    learning_rate: float = 1e-3,
+    batch_size: int = 64,
+    epochs: int = 20,
+    seed: int = 42
+):
+    # ─── 랜덤 시드 고정 ───────────────────────────────────────────────────────────
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def get_device():
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    elif torch.cuda.is_available():
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")
+    # ─── MLflow 설정 ─────────────────────────────────────────────────────────────
+    mlflow_tracking = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5001")
+    mlflow.set_tracking_uri(mlflow_tracking)
+    mlflow.set_experiment("mnist-digit-captcha")
 
-def train(num_epochs=20, learning_rate=0.001, batch_size=64, seed=42):
+    with mlflow.start_run() as run:
+        mlflow.log_params({
+            "learning_rate": learning_rate,
+            "batch_size": batch_size,
+            "epochs": epochs,
+            "seed": seed,
+            "be_base_url": be_base_url
+        })
 
-    set_seed(seed)
-    
-    mlflow.set_tracking_uri("http://localhost:5000")
-    mlflow.set_experiment("mnist-digit-captcha")    
-    with mlflow.start_run():    
-        device = get_device()
-        print(f"Using device: {device}")
+        # ─── 1) BE로부터 사용자 캡차 데이터 받아오기 ────────────────────────────────
+        user_data_available = True
+        try:
+            fetch_and_extract_user_images(be_base_url)
+        except Exception as e:
+            print(f"[Train] 사용자 데이터 가져오기 실패 → MNIST 전용으로 학습: {e}")
+            user_data_available = False
 
-        train_loader, test_loader = get_dataloaders(batch_size=batch_size)
-        model = HybridCNN().to(device)   
+        # ─── 2) DataLoader 준비 ─────────────────────────────────────────────────
+        if user_data_available:
+            try:
+                train_loader, test_loader = get_combined_dataloaders(
+                    batch_size=batch_size
+                )
+            except Exception as e:
+                print(f"[Train] 사용자 데이터 처리 실패 → MNIST 전용: {e}")
+                train_loader, test_loader = get_mnist_only_dataloaders(
+                    batch_size=batch_size
+                )
+        else:
+            train_loader, test_loader = get_mnist_only_dataloaders(
+                batch_size=batch_size
+            )
+
+        # ─── 3) 모델/손실함수/옵티마이저/스케줄러 설정 ──────────────────────────────
+        model = HybridCNN(num_classes=10).to(device)
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-4)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.5)
-   
-        best_accuracy = 0.0
-    
-        for epoch in range(num_epochs):
+        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+
+        # ─── 예시 입력 생성 (input_example) ──────────────────────────────────────
+        example_input = torch.randn(1, 1, 28, 28, dtype=torch.float32).to(device)
+        example_input_np = example_input.cpu().numpy()
+        
+        best_f1 = 0.0
+        best_model_path = None
+
+        # ─── 4) 학습 루프 ─────────────────────────────────────────────────────────
+        for epoch in range(epochs):
             model.train()
-            running_loss = 0.0
-            correct, total = 0, 0
-            all_preds, all_labels = [], []
+            epoch_loss = 0.0
+            all_preds = []
+            all_labels = []
+
             for images, labels in train_loader:
                 images = images.to(device, dtype=torch.float32)
                 labels = labels.to(device)
 
+                optimizer.zero_grad()
                 outputs = model(images)
                 loss = criterion(outputs, labels)
-
-                optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 
-                running_loss += loss.item()
-                _, predicted = torch.max(outputs, 1)
-                correct += (predicted == labels).sum().item()
-                total += labels.size(0)
-                all_preds.extend(predicted.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())    
-            train_acc = correct / total
-            avg_loss = running_loss / len(train_loader)
+                epoch_loss += loss.item() * labels.size(0)
+                _, preds = torch.max(outputs, 1)
+                all_preds.extend(preds.cpu().numpy().tolist())
+                all_labels.extend(labels.cpu().numpy().tolist())
+
+            # ─── 학습 정확도 계산 ────────────────────────────────────────────────
+            epoch_loss = epoch_loss / len(train_loader.dataset)
+            train_acc = sum([1 for p, l in zip(all_preds, all_labels) if p == l]) / len(all_labels)
+
+            # ─── 검증 정확도 계산 ────────────────────────────────────────────────
             val_acc = evaluate(model, test_loader, device)
-            precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
-            recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
-            f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)    
-            print(f"Epoch {epoch+1}/{num_epochs} | Loss: {avg_loss:.4f} | Train Acc: {train_acc:.4f} | Val Acc: {val_acc:.4f}")
-            print(f"Precision: {precision:.4f} | Recall: {recall:.4f} | F1 Score: {f1:.4f}")    
-            mlflow.log_metric("loss", avg_loss, step=epoch)
-            mlflow.log_metric("train_accuracy", train_acc, step=epoch)
-            mlflow.log_metric("val_accuracy", val_acc, step=epoch)
-            mlflow.log_metric("precision", precision, step=epoch)
-            mlflow.log_metric("recall", recall, step=epoch)
-            mlflow.log_metric("f1_score", f1, step=epoch)   
-            if val_acc > best_accuracy:
-                best_accuracy = val_acc
-                torch.save(model.state_dict(), "../tests/best_model.pth")
-                mlflow.log_artifact("../tests/best_model.pth")
-                print(f"Best model saved and logged with val acc: {val_acc:.4f}")   
-            scheduler.step()    
-        mlflow.pytorch.log_model(model, artifact_path="model", registered_model_name="HybridCNN")
-        mlflow.log_param("epochs", num_epochs)
-        mlflow.log_param("optimizer", "Adam")
-        mlflow.log_param("learning_rate", learning_rate)
-        mlflow.log_param("batch_size", batch_size)
-        mlflow.log_param("weight_decay", 1e-4)
-        mlflow.log_param("model_architecture", "HybridCNN")
-        mlflow.log_param("seed", seed)
+
+            # ─── Precision, Recall, F1 계산 ─────────────────────────────────────
+            model.eval()
+            val_preds = []
+            val_labels = []
+            with torch.no_grad():
+                for images, labels in test_loader:
+                    images = images.to(device, dtype=torch.float32)
+                    labels = labels.to(device)
+                    outputs = model(images)
+                    _, preds = torch.max(outputs, 1)
+                    val_preds.extend(preds.cpu().numpy().tolist())
+                    val_labels.extend(labels.cpu().numpy().tolist())
+
+            precision = precision_score(val_labels, val_preds, average='macro', zero_division=0)
+            recall    = recall_score(val_labels, val_preds, average='macro', zero_division=0)
+            f1        = f1_score(val_labels, val_preds, average='macro', zero_division=0)
+
+            # ─── MLflow 로깅 ───────────────────────────────────────────────────
+            mlflow.log_metrics({
+                "train_loss": epoch_loss,
+                "train_acc": train_acc,
+                "val_acc": val_acc,
+                "precision": precision,
+                "recall": recall,
+                "f1_score": f1
+            }, step=epoch)
+
+            print(f"[Epoch {epoch+1}/{epochs}] "
+                  f"Loss: {epoch_loss:.4f} "
+                  f"Train Acc: {train_acc:.4f} "
+                  f"Val Acc: {val_acc:.4f} "
+                  f"F1: {f1:.4f}")
+
+            # ─── 베스트 F1 모델 저장 ───────────────────────────────────────────
+            if f1 > best_f1:
+                best_f1 = f1
+                best_model_path = f"best_model_epoch_{epoch+1}.pth"
+                torch.save(model.state_dict(), best_model_path)
+
+            scheduler.step()
+
+        # ─── 5) 학습 완료 후 MLflow에 베스트 모델만 등록 ────────────────────────────
+        if best_model_path is None:
+            raise RuntimeError("학습 도중 best_model_path가 설정되지 않았습니다.")
+
+        # 1) 로컬에 저장된 최고 성능 모델 로드
+        print(f"[Train] Best F1: {best_f1:.4f} → 로컬 모델 '{best_model_path}' 로드 중...")
+        model.load_state_dict(torch.load(best_model_path))
+
+        # 2) MLflow에 베스트 모델만 등록
+        mlflow.pytorch.log_model(
+            pytorch_model=model,
+            artifact_path="model",
+            registered_model_name="HybridCNN"
+        )
+        print("[Train] MLflow에 HybridCNN (best) 버전으로 등록 완료")
+        
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--be_base_url", type=str, required=True, help="BE 서버 베이스 URL, 예) http://localhost:8000")
+    parser.add_argument("--learning_rate", type=float, default=1e-3, help="학습률")
+    parser.add_argument("--batch_size", type=int, default=64, help="배치 크기")
+    parser.add_argument("--epochs", type=int, default=20, help="에폭 수")
+    parser.add_argument("--seed", type=int, default=42, help="랜덤 시드")
+    args = parser.parse_args()
+
+    train(
+        be_base_url=args.be_base_url,
+        learning_rate=args.learning_rate,
+        batch_size=args.batch_size,
+        epochs=args.epochs,
+        seed=args.seed
+    )
 
 if __name__ == "__main__":
-    train()
+    main()

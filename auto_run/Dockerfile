@@ -18,6 +18,7 @@ RUN pip3 install --upgrade pip && \
 
 COPY src/           /app/src/
 COPY auto_run/      /app/auto_run/
+RUN sed -i 's/\r$//' /app/auto_run/run_training.sh
 COPY main.py        /app/
 COPY auto_run/crontab.txt /etc/cron.d/ml_training
 

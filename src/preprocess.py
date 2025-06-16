@@ -5,20 +5,23 @@ import torch
 from torchvision import transforms
 
 def preprocess_base64_image(base64_string: str) -> torch.Tensor:
-    # 1. base64 디코딩하고 흑백 이미지로 변환
-    image_data = base64.b64decode(base64_string)
-    image = Image.open(io.BytesIO(image_data)).convert("L")
+    """
+    Base64 문자열로 넘어온 PNG(흑백 숫자 그림)을 디코딩하여
+    1×1×28×28 형태의 float32 Tensor로 변환하여 반환.
+    Args:
+        base64_string (str): "data:image/png;base64,xxxxx..." 와 같은 전체 문자열
+    """
+    if base64_string.startswith("data:"):
+        _, base64_data = base64_string.split(",", 1)
+    else:
+        base64_data = base64_string
 
-    # 2. 28x28 크기로 사이즈 바꾸고 Tensor 변환
+    image_bytes = base64.b64decode(base64_data)
+    image = Image.open(io.BytesIO(image_bytes)).convert("L")  # 흑백 모드
     transform = transforms.Compose([
         transforms.Resize((28, 28)),
         transforms.ToTensor(),
+        transforms.Normalize((0.1307,), (0.3081,))
     ])
-
-    # 3. 전처리 적용
-    tensor = transform(image)
-
-    # 4. (1, 1, 28, 28)
-    tensor = tensor.unsqueeze(0)
-
-    return tensor
+    tensor_image = transform(image).unsqueeze(0)  # shape: (1, 1, 28, 28)
+    return tensor_image

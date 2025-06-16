@@ -1,32 +1,34 @@
-import os
 import argparse
+import os
 import random
-import numpy as np
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-
-from sklearn.metrics import precision_score, recall_score, f1_score
+from datetime import datetime
 
 import mlflow
 import mlflow.pytorch
-
-from fetch_user_images import fetch_and_extract_user_images
-from data_loader import get_combined_dataloaders, get_mnist_only_dataloaders
-from models import HybridCNN
-from eval import evaluate
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from mlflow.tracking import MlflowClient
-from datetime import datetime
+from sklearn.metrics import f1_score, precision_score, recall_score
 
-timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+from data_loader import get_combined_dataloaders, get_mnist_only_dataloaders
+from eval import evaluate
+from fetch_user_images import fetch_and_extract_user_images
+from models import HybridCNN
+from slack import send_slack_message
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+remote_server_uri = os.getenv("MLFLOW_URL", "http://43.200.200.176:5000")
+mlflow.set_tracking_uri(remote_server_uri)
+
 
 def train(
     be_base_url: str,
     learning_rate: float = 1e-3,
     batch_size: int = 64,
     epochs: int = 1,
-    seed: int = 42
+    seed: int = 42,
 ):
     # ─── 랜덤 시드 고정 ───────────────────────────────────────────────────────────
     random.seed(seed)
@@ -36,14 +38,16 @@ def train(
 
     mlflow.set_experiment("mnist-digit-captcha")
 
-    with mlflow.start_run() as run:
-        mlflow.log_params({
-            "learning_rate": learning_rate,
-            "batch_size": batch_size,
-            "epochs": epochs,
-            "seed": seed,
-            "be_base_url": be_base_url
-        })
+    with mlflow.start_run():
+        mlflow.log_params(
+            {
+                "learning_rate": learning_rate,
+                "batch_size": batch_size,
+                "epochs": epochs,
+                "seed": seed,
+                "be_base_url": be_base_url,
+            }
+        )
 
         # ─── 1) BE로부터 사용자 캡차 데이터 받아오기 ────────────────────────────────
         user_data_available = True
@@ -78,7 +82,7 @@ def train(
         # ─── 예시 입력 생성 (input_example) ──────────────────────────────────────
         example_input = torch.randn(1, 1, 28, 28, dtype=torch.float32).to(device)
         example_input_np = example_input.cpu().numpy()
-        
+
         best_f1 = 0.0
         best_model_path = None
 
@@ -106,7 +110,9 @@ def train(
 
             # ─── 학습 정확도 계산 ────────────────────────────────────────────────
             epoch_loss = epoch_loss / len(train_loader.dataset)
-            train_acc = sum([1 for p, l in zip(all_preds, all_labels) if p == l]) / len(all_labels)
+            train_acc = sum([1 for p, l in zip(all_preds, all_labels) if p == l]) / len(
+                all_labels
+            )
 
             # ─── 검증 정확도 계산 ────────────────────────────────────────────────
             val_acc = evaluate(model, test_loader, device)
@@ -124,32 +130,40 @@ def train(
                     val_preds.extend(preds.cpu().numpy().tolist())
                     val_labels.extend(labels.cpu().numpy().tolist())
 
-            precision = precision_score(val_labels, val_preds, average='macro', zero_division=0)
-            recall    = recall_score(val_labels, val_preds, average='macro', zero_division=0)
-            f1        = f1_score(val_labels, val_preds, average='macro', zero_division=0)
+            precision = precision_score(
+                val_labels, val_preds, average="macro", zero_division=0
+            )
+            recall = recall_score(
+                val_labels, val_preds, average="macro", zero_division=0
+            )
+            f1 = f1_score(val_labels, val_preds, average="macro", zero_division=0)
 
             # ─── MLflow 로깅 ───────────────────────────────────────────────────
-            mlflow.log_metrics({
-                "train_loss": epoch_loss,
-                "train_acc": train_acc,
-                "val_acc": val_acc,
-                "precision": precision,
-                "recall": recall,
-                "f1_score": f1
-            }, step=epoch)
+            mlflow.log_metrics(
+                {
+                    "train_loss": epoch_loss,
+                    "train_acc": train_acc,
+                    "val_acc": val_acc,
+                    "precision": precision,
+                    "recall": recall,
+                    "f1_score": f1,
+                },
+                step=epoch,
+            )
 
-            print(f"[Epoch {epoch+1}/{epochs}] "
-                  f"Loss: {epoch_loss:.4f} "
-                  f"Train Acc: {train_acc:.4f} "
-                  f"Val Acc: {val_acc:.4f} "
-                  f"F1: {f1:.4f}")
+            print(
+                f"[Epoch {epoch+1}/{epochs}] "
+                f"Loss: {epoch_loss:.4f} "
+                f"Train Acc: {train_acc:.4f} "
+                f"Val Acc: {val_acc:.4f} "
+                f"F1: {f1:.4f}"
+            )
 
             # ─── 베스트 F1 모델 저장 ───────────────────────────────────────────
             if f1 > best_f1:
                 best_f1 = f1
                 best_model_path = f"best_model_epoch_{epoch+1}.pth"
                 torch.save(model.state_dict(), best_model_path)
-                # mlflow.log_artifact(best_model_path)
 
             scheduler.step()
 
@@ -165,21 +179,57 @@ def train(
         mlflow.pytorch.log_model(
             pytorch_model=model,
             artifact_path="model",
-            registered_model_name="HybridCNN"
+            registered_model_name="HybridCNN",
+            input_example=example_input_np,
         )
-        client = MlflowClient() 
+        client = MlflowClient()
         run_id = mlflow.active_run().info.run_id
         model_uri = f"runs:/{run_id}/model"
-        mv = client.create_model_version(name="HybridCNN", source=model_uri, run_id=run_id)
+        mv = client.create_model_version(
+            name="HybridCNN", source=model_uri, run_id=run_id
+        )
         version = mv.version
-        client.set_model_version_tag(name="HybridCNN", version=version, key="timestamp", value=timestamp)
-        client.set_registered_model_alias(name="HybridCNN", alias=timestamp, version=version)
-        
+        client.set_model_version_tag(
+            name="HybridCNN", version=version, key="timestamp", value=timestamp
+        )
+        client.set_registered_model_alias(
+            name="HybridCNN", alias=timestamp, version=version
+        )
+
         print("[Train] MLflow에 HybridCNN (best) 버전으로 등록 완료")
-        
+
+        # Send final results to Slack
+        mlflow_url = (
+            f"{remote_server_uri}/#/experiments/"
+            f"{mlflow.active_run().info.experiment_id}/runs/{run_id}"
+        )
+        slack_message = f"""
+*🎯 Training Completed*
+• *Model Version:* {version}
+• *Timestamp:* {timestamp}
+• *Best F1 Score:* {best_f1:.4f}
+• *Final Metrics:*
+  - Validation Accuracy: {val_acc:.4f}
+  - Precision: {precision:.4f}
+  - Recall: {recall:.4f}
+• *Training Config:*
+  - Learning Rate: {learning_rate}
+  - Batch Size: {batch_size}
+  - Epochs: {epochs}
+  - Seed: {seed}
+• *Data Source:* {
+    'Combined (MNIST + User Data)' if user_data_available else 'MNIST Only'
+}
+• *MLflow Results:* <{mlflow_url}|View detailed results>
+"""
+        send_slack_message(slack_message)
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--be_base_url", type=str, default=None, help="BE 서버 베이스 URL")
+    parser.add_argument(
+        "--be_base_url", type=str, default=None, help="BE 서버 베이스 URL"
+    )
     parser.add_argument("--learning_rate", type=float, default=1e-3, help="학습률")
     parser.add_argument("--batch_size", type=int, default=64, help="배치 크기")
     parser.add_argument("--epochs", type=int, default=20, help="에폭 수")
@@ -191,8 +241,9 @@ def main():
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
         epochs=args.epochs,
-        seed=args.seed
+        seed=args.seed,
     )
+
 
 if __name__ == "__main__":
     main()

@@ -19,6 +19,7 @@ services:
       - mlflow
     environment:
       MLFLOW_TRACKING_URI: "http://mlflow:5000"
+      BE_BASE_URL: "http://host.docker.internal:8000"
     volumes:
       - .:/app
       - ./logs:/app/logs

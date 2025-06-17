@@ -176,8 +176,9 @@ def train(
         model.load_state_dict(torch.load(best_model_path))
 
         # 2) MLflow에 베스트 모델만 등록
+        traced_model = torch.jit.trace(model, example_input)
         mlflow.pytorch.log_model(
-            pytorch_model=model,
+            pytorch_model=traced_model,
             artifact_path="model",
             registered_model_name="HybridCNN",
             input_example=example_input_np,
@@ -194,6 +195,9 @@ def train(
         )
         client.set_registered_model_alias(
             name="HybridCNN", alias=timestamp, version=version
+        )
+        client.set_registered_model_alias(
+            name="HybridCNN", alias="prod", version=version
         )
 
         print("[Train] MLflow에 HybridCNN (best) 버전으로 등록 완료")

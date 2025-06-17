@@ -17,6 +17,8 @@ best_model_*.pth
 user_data/
 
 data/MNIST/raw/
+src/data/MNIST/
+tests/*.pth
 
 # IDE / 에디터 설정
 .vscode/

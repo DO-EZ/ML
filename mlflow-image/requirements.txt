@@ -1,0 +1,7 @@
+mlflow==2.19.0
+torch>=1.13
+torchvision
+scikit-learn
+pandas
+Pillow
+requests

@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/ 
+*.py[cod]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+.env
+
+mlflow.db
+mlruns/
+mlartifacts/
+best_model_*.pth
+user_data/
+
+data/
+src/data/MNIST/
+tests/*.pth
+
+# IDE / 에디터 설정
+.vscode/
+.idea/
+
+# 로그
+*.log

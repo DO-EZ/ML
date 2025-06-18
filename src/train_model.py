@@ -81,7 +81,6 @@ def train(
 
         # ─── 예시 입력 생성 (input_example) ──────────────────────────────────────
         example_input = torch.randn(1, 1, 28, 28, dtype=torch.float32).to(device)
-        example_input_np = example_input.cpu().numpy()
 
         best_f1 = 0.0
         best_model_path = None
@@ -174,14 +173,16 @@ def train(
         # 1) 로컬에 저장된 최고 성능 모델 로드
         print(f"[Train] Best F1: {best_f1:.4f} → 모델 '{best_model_path}' 로드 중...")
         model.load_state_dict(torch.load(best_model_path))
+        model_cpu = model.to("cpu")  # <- CPU로 강제 이동
+        example_input_cpu = example_input.to("cpu")  # <- 입력도 CPU로
 
-        # 2) MLflow에 베스트 모델만 등록
-        traced_model = torch.jit.trace(model, example_input)
+        # Trace (CPU 기반으로)
+        traced_model = torch.jit.trace(model_cpu, example_input_cpu)
         mlflow.pytorch.log_model(
             pytorch_model=traced_model,
             artifact_path="model",
             registered_model_name="HybridCNN",
-            input_example=example_input_np,
+            input_example=example_input_cpu.numpy(),
         )
         client = MlflowClient()
         run_id = mlflow.active_run().info.run_id

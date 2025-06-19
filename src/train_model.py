@@ -19,7 +19,7 @@ from models import HybridCNN
 from slack import send_slack_message
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-remote_server_uri = os.getenv("MLFLOW_URL", "http://43.200.200.176:8002")
+remote_server_uri = os.getenv("MLFLOW_URL", "http://43.200.200.176:5000")
 mlflow.set_tracking_uri(remote_server_uri)
 
 
@@ -233,7 +233,10 @@ def train(
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--be_base_url", type=str, default=None, help="BE 서버 베이스 URL"
+        "--be_base_url",
+        type=str,
+        default="http://43.200.200.176:8002",
+        help="BE 서버 베이스 URL",
     )
     parser.add_argument("--learning_rate", type=float, default=1e-3, help="학습률")
     parser.add_argument("--batch_size", type=int, default=64, help="배치 크기")

@@ -3,7 +3,7 @@ import json
 import requests
 
 SLACK_WEB_HOOK_URL = (
-    "https://hooks.slack.com/services/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"
+    "https://hooks.slack.com/services/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"
 )
 
 

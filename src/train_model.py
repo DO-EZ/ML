@@ -19,7 +19,7 @@ from models import HybridCNN
 from slack import send_slack_message
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-remote_server_uri = os.getenv("MLFLOW_URL", "http://43.200.200.176:5000")
+remote_server_uri = os.getenv("MLFLOW_URL", "http://43.200.200.176:8002")
 mlflow.set_tracking_uri(remote_server_uri)
 
 
